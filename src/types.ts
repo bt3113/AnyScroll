@@ -2,6 +2,24 @@ export type DocKind = 'pdf' | 'docx' | 'text';
 
 export type DocStatus = 'parsing' | 'summarizing' | 'ready' | 'error';
 
+export type CardVisualType = 'flow' | 'steps' | 'timeline' | 'compare' | 'hub';
+
+export interface CardVisualNode {
+  label: string;
+  detail: string;
+}
+
+export interface CardVisual {
+  type: CardVisualType;
+  title?: string;
+  nodes: CardVisualNode[];
+}
+
+export interface CardInteraction {
+  prompt: string;
+  answer: string;
+}
+
 export interface DocRecord {
   id: string;
   title: string;
@@ -25,6 +43,9 @@ export interface CardRecord {
   title: string;
   body: string;
   accent: number;
+  keyPoints?: string[];
+  visual?: CardVisual;
+  interaction?: CardInteraction;
 }
 
 export interface SummarizeProgressMessage {
@@ -40,6 +61,9 @@ export interface SummarizeChunkMessage {
   index: number;
   title: string;
   body: string;
+  keyPoints?: string[];
+  visual?: CardVisual;
+  interaction?: CardInteraction;
 }
 
 export interface SummarizeDoneMessage {

@@ -39,7 +39,10 @@ export async function ingestFile(
 
   (async () => {
     try {
-      const rawText = await extractText(file, kind);
+      const rawText = await extractText(file, kind).catch((err) => {
+        const detail = err instanceof Error ? err.message : String(err);
+        throw new Error(`Couldn't read the file - check your connection and try again. (${detail})`);
+      });
       const words = countWords(rawText);
       const chunks = chunkText(rawText);
 

@@ -14,7 +14,27 @@ function post(message: WorkerOutMessage) {
   (self as unknown as Worker).postMessage(message);
 }
 
+async function withRetries<T>(fn: () => Promise<T>, attempts: number): Promise<T> {
+  let lastError: unknown;
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await fn();
+    } catch (err) {
+      lastError = err;
+      if (i < attempts - 1) {
+        await new Promise((resolve) => setTimeout(resolve, 800 * (i + 1)));
+      }
+    }
+  }
+  throw lastError;
+}
+
 async function loadSummarizer(docId: string): Promise<Summarizer> {
+  // Cache the in-flight/successful load so multiple chunks share one model
+  // instance, but never cache a *failed* load - a transient network error
+  // (weak signal, dropped connection while fetching ~50-100MB of weights)
+  // would otherwise permanently fail every document for the rest of the tab
+  // session, since this promise is reused across uploads.
   if (summarizerPromise) return summarizerPromise;
 
   // The model is fetched as several files (tokenizer, config, encoder/decoder
@@ -43,21 +63,28 @@ async function loadSummarizer(docId: string): Promise<Summarizer> {
     post({ type: 'progress', docId, stage: 'model', progress: lastReported });
   };
 
-  summarizerPromise = (
-    pipeline('summarization', MODEL_ID, {
-      dtype: 'q8',
-      device: 'webgpu',
-      progress_callback: onProgress,
-    } as never).catch(() =>
+  const attempt = (): Promise<Summarizer> =>
+    (
       pipeline('summarization', MODEL_ID, {
         dtype: 'q8',
-        device: 'wasm',
+        device: 'webgpu',
         progress_callback: onProgress,
-      } as never),
-    ) as unknown
-  ) as Promise<Summarizer>;
+      } as never).catch(() =>
+        pipeline('summarization', MODEL_ID, {
+          dtype: 'q8',
+          device: 'wasm',
+          progress_callback: onProgress,
+        } as never),
+      ) as unknown
+    ) as Promise<Summarizer>;
 
-  return summarizerPromise;
+  const promise = withRetries(attempt, 3).catch((err) => {
+    summarizerPromise = null;
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(`Couldn't download the AI model - check your connection and try again. (${detail})`);
+  });
+  summarizerPromise = promise;
+  return promise;
 }
 
 function deriveTitle(summary: string): { title: string; body: string } {

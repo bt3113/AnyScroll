@@ -1,4 +1,4 @@
-import { pipeline } from '@huggingface/transformers';
+import { pipeline, env } from '@huggingface/transformers';
 import type { SummarizeInMessage, WorkerOutMessage } from '../../types';
 
 // The transformers.js pipeline type is deeply generic over task/model id and
@@ -7,6 +7,35 @@ import type { SummarizeInMessage, WorkerOutMessage } from '../../types';
 type Summarizer = (text: string, options: Record<string, unknown>) => Promise<unknown>;
 
 const MODEL_ID = 'Xenova/distilbart-cnn-6-6';
+
+// onnxruntime-web's multi-threaded WASM backend needs SharedArrayBuffer,
+// which only works when the page is served with Cross-Origin-Opener-Policy /
+// Cross-Origin-Embedder-Policy headers. GitHub Pages is static hosting and
+// cannot set those, so on a browser that still tries the threaded path
+// inference can hang indefinitely with no error (reported: stuck at a fixed
+// % forever). Force the plain single-threaded backend, which needs neither
+// header and always completes, just somewhat slower per chunk.
+(env as { backends: { onnx: { wasm: { numThreads: number } } } }).backends.onnx.wasm.numThreads = 1;
+
+// A stuck/very slow inference call should surface as an actionable failure
+// instead of spinning "Converting..." forever with no way out.
+const CHUNK_TIMEOUT_MS = 120_000;
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
 
 let summarizerPromise: Promise<Summarizer> | null = null;
 
@@ -107,11 +136,15 @@ self.addEventListener('message', async (event: MessageEvent<SummarizeInMessage>)
 
     for (let i = 0; i < chunks.length; i++) {
       const chunk = chunks[i];
-      const output = await summarizer(chunk, {
-        max_new_tokens: 110,
-        min_new_tokens: 24,
-        do_sample: false,
-      });
+      const output = await withTimeout(
+        summarizer(chunk, {
+          max_new_tokens: 110,
+          min_new_tokens: 24,
+          do_sample: false,
+        }),
+        CHUNK_TIMEOUT_MS,
+        `Summarizing is taking too long on this device (stuck on part ${i + 1} of ${chunks.length}).`,
+      );
       const rawSummary = Array.isArray(output)
         ? (output[0] as { summary_text?: string }).summary_text ?? ''
         : ((output as { summary_text?: string }).summary_text ?? '');

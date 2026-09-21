@@ -1,6 +1,6 @@
 import { useRef } from 'react';
 import type { DocRecord } from '../types';
-import { kindIcon, CheckIcon } from './icons';
+import { kindIcon, CheckIcon, TrashIcon } from './icons';
 
 interface DocumentRowProps {
   doc: DocRecord;
@@ -9,6 +9,7 @@ interface DocumentRowProps {
   onOpen: () => void;
   onToggleSelect: () => void;
   onLongPress: () => void;
+  onDelete: () => void;
 }
 
 function statusLine(doc: DocRecord): string {
@@ -25,6 +26,7 @@ export default function DocumentRow({
   onOpen,
   onToggleSelect,
   onLongPress,
+  onDelete,
 }: DocumentRowProps) {
   const pressTimer = useRef<ReturnType<typeof setTimeout>>();
   const longPressFired = useRef(false);
@@ -64,6 +66,20 @@ export default function DocumentRow({
       {(doc.status === 'parsing' || doc.status === 'summarizing') && (
         <span className="doc-spinner" aria-hidden />
       )}
+      {!selectMode && (
+        <button
+          type="button"
+          className="doc-delete"
+          aria-label={`Delete ${doc.title}`}
+          onClick={(e) => {
+            e.stopPropagation();
+            onDelete();
+          }}
+          onPointerDown={(e) => e.stopPropagation()}
+        >
+          <TrashIcon size={16} />
+        </button>
+      )}
       <style>{`
         .doc-row {
           display: flex;
@@ -73,6 +89,8 @@ export default function DocumentRow({
           border-radius: var(--radius-sm);
           transition: background 0.15s var(--ease-out);
           user-select: none;
+          -webkit-touch-callout: none;
+          touch-action: manipulation;
         }
         .doc-row:hover,
         .doc-row.selected {
@@ -137,6 +155,21 @@ export default function DocumentRow({
           border: 2px solid rgba(215, 255, 61, 0.25);
           border-top-color: var(--accent);
           animation: spin 0.8s linear infinite;
+        }
+        .doc-delete {
+          flex-shrink: 0;
+          width: 32px;
+          height: 32px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 50%;
+          color: var(--text-tertiary);
+        }
+        .doc-delete:hover,
+        .doc-delete:active {
+          color: var(--danger);
+          background: rgba(255, 107, 107, 0.12);
         }
         @keyframes spin {
           to { transform: rotate(360deg); }

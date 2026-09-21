@@ -151,6 +151,7 @@ export default function Library() {
               }}
               onToggleSelect={() => toggleSelect(doc.id)}
               onLongPress={() => enterSelectMode(doc.id)}
+              onDelete={() => removeDoc(doc.id)}
             />
           ))}
         </div>
@@ -173,6 +174,7 @@ export default function Library() {
                 }}
                 onToggleSelect={() => toggleSelect(doc.id)}
                 onLongPress={() => enterSelectMode(doc.id)}
+                onDelete={() => removeDoc(doc.id)}
               />
             ))}
         </div>

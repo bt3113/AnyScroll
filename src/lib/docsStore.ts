@@ -21,7 +21,28 @@ function upsert(doc: DocRecord) {
 }
 
 export async function initDocsStore() {
-  docs = await listDocs();
+  const loaded = await listDocs();
+
+  // A parsing/summarizing job only exists in memory. If the page was reloaded,
+  // Safari killed the tab, or a previous worker hung, that job cannot still be
+  // running. Convert those stale records to an explicit error so the UI never
+  // shows "Converting… 0%" forever after a refresh.
+  const repaired = await Promise.all(
+    loaded.map(async (doc): Promise<DocRecord> => {
+      if (doc.status !== 'parsing' && doc.status !== 'summarizing') return doc;
+
+      const failed: DocRecord = {
+        ...doc,
+        status: 'error',
+        progress: 0,
+        error: 'Processing was interrupted. Please upload the file again.',
+      };
+      await dbPutDoc(failed);
+      return failed;
+    }),
+  );
+
+  docs = repaired;
   emit();
 }
 

@@ -17,11 +17,30 @@ function post(message: WorkerOutMessage) {
 async function loadSummarizer(docId: string): Promise<Summarizer> {
   if (summarizerPromise) return summarizerPromise;
 
+  // The model is fetched as several files (tokenizer, config, encoder/decoder
+  // weights) that download concurrently, each firing its own 0-100 progress
+  // event. Reporting any single file's percentage as "the" progress makes the
+  // bar jump around; instead track bytes loaded/total per file and report the
+  // combined ratio, which only ever increases.
+  const fileProgress = new Map<string, { loaded: number; total: number }>();
+  let lastReported = 0;
+
   const onProgress = (info: unknown) => {
-    const data = info as { status?: string; progress?: number };
-    if (typeof data.progress === 'number') {
-      post({ type: 'progress', docId, stage: 'model', progress: data.progress / 100 });
+    const data = info as { status?: string; file?: string; loaded?: number; total?: number };
+    if (data.status !== 'progress' || !data.file || typeof data.total !== 'number' || data.total <= 0) {
+      return;
     }
+    fileProgress.set(data.file, { loaded: data.loaded ?? 0, total: data.total });
+
+    let loadedSum = 0;
+    let totalSum = 0;
+    for (const { loaded, total } of fileProgress.values()) {
+      loadedSum += loaded;
+      totalSum += total;
+    }
+    const ratio = totalSum > 0 ? loadedSum / totalSum : 0;
+    lastReported = Math.max(lastReported, ratio);
+    post({ type: 'progress', docId, stage: 'model', progress: lastReported });
   };
 
   summarizerPromise = (

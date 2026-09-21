@@ -35,6 +35,9 @@ export function summarizeDocument(
           index: msg.index,
           title: msg.title,
           body: msg.body,
+          keyPoints: msg.keyPoints,
+          visual: msg.visual,
+          interaction: msg.interaction,
           accent: msg.index % ACCENT_COUNT,
         });
       } else if (msg.type === 'done') {

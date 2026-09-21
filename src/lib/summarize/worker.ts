@@ -1,0 +1,87 @@
+import { pipeline } from '@huggingface/transformers';
+import type { SummarizeInMessage, WorkerOutMessage } from '../../types';
+
+// The transformers.js pipeline type is deeply generic over task/model id and
+// blows up `tsc` ("union type too complex") when narrowed further, so the
+// summarizer handle and its call options are kept as `any` at this boundary.
+type Summarizer = (text: string, options: Record<string, unknown>) => Promise<unknown>;
+
+const MODEL_ID = 'Xenova/distilbart-cnn-6-6';
+
+let summarizerPromise: Promise<Summarizer> | null = null;
+
+function post(message: WorkerOutMessage) {
+  (self as unknown as Worker).postMessage(message);
+}
+
+async function loadSummarizer(docId: string): Promise<Summarizer> {
+  if (summarizerPromise) return summarizerPromise;
+
+  const onProgress = (info: unknown) => {
+    const data = info as { status?: string; progress?: number };
+    if (typeof data.progress === 'number') {
+      post({ type: 'progress', docId, stage: 'model', progress: data.progress / 100 });
+    }
+  };
+
+  summarizerPromise = (
+    pipeline('summarization', MODEL_ID, {
+      dtype: 'q8',
+      device: 'webgpu',
+      progress_callback: onProgress,
+    } as never).catch(() =>
+      pipeline('summarization', MODEL_ID, {
+        dtype: 'q8',
+        device: 'wasm',
+        progress_callback: onProgress,
+      } as never),
+    ) as unknown
+  ) as Promise<Summarizer>;
+
+  return summarizerPromise;
+}
+
+function deriveTitle(summary: string): { title: string; body: string } {
+  const clean = summary.trim();
+  const firstSentenceMatch = clean.match(/[^.!?]+[.!?]?/);
+  const first = (firstSentenceMatch?.[0] ?? clean).trim();
+  const words = first.split(/\s+/);
+  const title = words.slice(0, 8).join(' ').replace(/[.,;:]+$/, '');
+  const rest = clean.slice(first.length).trim();
+  return { title: title || 'Summary', body: rest || clean };
+}
+
+self.addEventListener('message', async (event: MessageEvent<SummarizeInMessage>) => {
+  const msg = event.data;
+  if (msg.type !== 'summarize') return;
+  const { docId, chunks } = msg;
+
+  try {
+    const summarizer = await loadSummarizer(docId);
+
+    for (let i = 0; i < chunks.length; i++) {
+      const chunk = chunks[i];
+      const output = await summarizer(chunk, {
+        max_new_tokens: 110,
+        min_new_tokens: 24,
+        do_sample: false,
+      });
+      const rawSummary = Array.isArray(output)
+        ? (output[0] as { summary_text?: string }).summary_text ?? ''
+        : ((output as { summary_text?: string }).summary_text ?? '');
+
+      const { title, body } = deriveTitle(rawSummary);
+      post({ type: 'chunk', docId, index: i, title, body });
+      post({
+        type: 'progress',
+        docId,
+        stage: 'summarizing',
+        progress: (i + 1) / chunks.length,
+      });
+    }
+
+    post({ type: 'done', docId });
+  } catch (err) {
+    post({ type: 'error', docId, error: err instanceof Error ? err.message : String(err) });
+  }
+});
